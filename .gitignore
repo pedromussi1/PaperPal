@@ -1,0 +1,44 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.python-version
+
+# Env
+.env
+.env.local
+*.env.local
+
+# Data + models
+backend/data/
+*.pdf
+!backend/tests/fixtures/*.pdf
+*.h5
+*.onnx
+*.pt
+*.bin
+
+# Caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.cache/
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Frontend (when added)
+node_modules/
+.next/
+out/
+dist/
+build/
+.turbo/
+
+# Logs
+*.log
