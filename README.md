@@ -4,8 +4,6 @@
 
 ![PaperPal screenshot](docs/screenshot.png)
 
-<sub>_(Add a screenshot here once the README lands. Suggested: a dark-mode shot showing the chat with a citation popover open and the "Retrieved context" drawer expanded.)_</sub>
-
 ## Why
 
 Most "chat with your PDFs" demos call out to a paid API. PaperPal stays on your machine end-to-end:
