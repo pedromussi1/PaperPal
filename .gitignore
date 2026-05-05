@@ -13,8 +13,10 @@ venv/
 
 # Data + models
 backend/data/
+backend/eval/runs/
 *.pdf
 !backend/tests/fixtures/*.pdf
+!backend/eval/fixtures/*.pdf
 *.h5
 *.onnx
 *.pt

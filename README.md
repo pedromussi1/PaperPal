@@ -184,12 +184,28 @@ Free-tier deployment stack:
 
 Caveats of the free Space tier: cold-start ~30 sec after ~48 h of inactivity; ephemeral filesystem (uploaded PDFs and the ChromaDB index reset on Space restart). Good enough for a portfolio demo; for real use, run locally with Ollama or upgrade the Space to a persistent tier.
 
+## Eval
+
+End-to-end eval harness lives in [`backend/eval/`](backend/eval/) — feeds a hand-curated dataset through the running backend and scores each answer against gold-standard cited pages, with a **no-retrieval baseline** for contrast.
+
+**Headline result on a 12-question Transformer-paper set, local Ollama (Llama 3.1 8B):**
+
+| Metric | No-RAG baseline | RAG | Lift |
+|---|---:|---:|---:|
+| Citation precision | 0.000 | 0.500 | +0.500 |
+| Citation recall    | 0.000 | 0.625 | +0.625 |
+| Citation F1        | 0.000 | 0.542 | +0.542 |
+| Mean latency (s)   | 1.48 | 1.71 | +0.23 |
+
+The full per-question breakdown, side-by-side answers, and known failure modes (model dropping `[paper_id:page]` format on math, hallucinating extra pages on long answers) are in [`backend/eval/REPORT.md`](backend/eval/REPORT.md). See [`backend/eval/README.md`](backend/eval/README.md) for how to reproduce.
+
 ## Roadmap
 
 - ✅ **Backend core** — page-aware ingestion, ChromaDB, Ollama streaming
 - ✅ **Frontend** — Next.js 16, streaming chat, citations, retrieved-chunks devtool, dark mode, library CRUD, persistent chat history
 - ✅ **Public deployment** — swappable `LLMProvider` (Ollama local + Groq cloud), Vercel + HuggingFace Spaces, [live demo](https://paperpal-bay.vercel.app/)
-- ⏳ **Eval harness** — RAGAS metrics + custom citation accuracy + chunk/k/embedding ablations + no-RAG baseline (`backend/eval/`)
+- ✅ **Eval harness MVP** — dataset, citation-accuracy metric, no-RAG baseline, auto-generated report
+- ⏳ **Eval harness v2** — RAGAS metrics (faithfulness, answer-relevance) + chunk-size / k / embedding-model ablations + multi-paper coverage
 - ⏳ **MLOps polish** — `docker-compose` for one-command bring-up, GitHub Actions CI for lint + typecheck + tests, `MODEL_CARD.md`, `WRITEUP.md`
 
 ## License
