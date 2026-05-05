@@ -34,7 +34,10 @@ export function Chat({ hasDocuments }: Props) {
 
   // Hydrate from localStorage on mount. Any message left in 'streaming'
   // status from a prior session was interrupted by the page closing —
-  // mark it as an error so the UI doesn't show a forever spinner.
+  // mark it as an error so the UI doesn't show a forever spinner. The
+  // setState-in-effect is intentional: localStorage isn't available
+  // during SSR, so lazy useState init can't read it without a hydration
+  // mismatch. This effect runs once on the client.
   useEffect(() => {
     try {
       const raw = localStorage.getItem(STORAGE_KEY);
@@ -45,6 +48,7 @@ export function Chat({ hasDocuments }: Props) {
             ? { ...m, status: "error" as const, error: "Interrupted by page reload." }
             : m,
         );
+        // eslint-disable-next-line react-hooks/set-state-in-effect -- one-time client hydration; see comment above
         setMessages(cleaned);
       }
     } catch {

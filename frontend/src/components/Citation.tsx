@@ -31,16 +31,17 @@ export function CitedAnswer({ text, retrieved }: Props) {
 
   const out: ReactNode[] = [];
   let cursor = 0;
-  let match: RegExpExecArray | null;
-  CITATION_RE.lastIndex = 0;
 
-  while ((match = CITATION_RE.exec(text)) !== null) {
+  // matchAll iterates without mutating CITATION_RE.lastIndex; safer than
+  // an exec() loop on a module-level /g regex.
+  for (const match of text.matchAll(CITATION_RE)) {
     const [marker, paperId, pageStr] = match;
     const page = Number(pageStr);
     const key = `${paperId}:${page}`;
+    const matchIndex = match.index ?? 0;
 
-    if (cursor < match.index) {
-      out.push(<Fragment key={`t-${cursor}`}>{text.slice(cursor, match.index)}</Fragment>);
+    if (cursor < matchIndex) {
+      out.push(<Fragment key={`t-${cursor}`}>{text.slice(cursor, matchIndex)}</Fragment>);
     }
 
     if (!refMap.has(key)) refMap.set(key, refMap.size + 1);
@@ -48,7 +49,7 @@ export function CitedAnswer({ text, retrieved }: Props) {
     const chunks = findChunks(paperId, page);
 
     out.push(
-      <Popover key={`c-${match.index}`}>
+      <Popover key={`c-${matchIndex}`}>
         <PopoverTrigger
           className="mx-0.5 inline-flex h-5 min-w-[1.25rem] items-center justify-center rounded bg-primary/15 px-1 text-xs font-semibold leading-none text-primary align-super hover:bg-primary/25 focus:outline-none focus:ring-2 focus:ring-primary/40"
           aria-label={`Citation for page ${page}`}
@@ -92,12 +93,12 @@ export function CitedAnswer({ text, retrieved }: Props) {
       </Popover>,
     );
     out.push(
-      <span key={`m-${match.index}`} className="sr-only">
+      <span key={`m-${matchIndex}`} className="sr-only">
         {marker}
       </span>,
     );
 
-    cursor = match.index + marker.length;
+    cursor = matchIndex + marker.length;
   }
 
   if (cursor < text.length) {

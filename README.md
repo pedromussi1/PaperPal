@@ -1,8 +1,12 @@
 # PaperPal
 
+[![CI](https://github.com/pedromussi1/PaperPal/actions/workflows/ci.yml/badge.svg)](https://github.com/pedromussi1/PaperPal/actions/workflows/ci.yml)
+
 > Chat over your research papers — fully local. Upload a PDF, ask grounded questions, get answers with inline page-anchored citations. Runs on a local Llama 3.1 model with **no API keys, no cloud LLM dependency, and zero ongoing cost**.
 
 **Live demo:** [paperpal-bay.vercel.app](https://paperpal-bay.vercel.app/) (frontend on Vercel, backend on [HuggingFace Spaces](https://huggingface.co/spaces/Zao0531/paperpal-backend), LLM via Groq's free tier — see [Deployment](#deployment) below for the architecture)
+
+**Docs:** [WRITEUP.md](WRITEUP.md) (design decisions and tradeoffs) · [MODEL_CARD.md](MODEL_CARD.md) (system card with limitations) · [backend/eval/REPORT.md](backend/eval/REPORT.md) (eval results)
 
 ![PaperPal screenshot](docs/screenshot.png)
 

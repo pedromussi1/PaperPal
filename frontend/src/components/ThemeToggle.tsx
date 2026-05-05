@@ -11,6 +11,7 @@ export function ThemeToggle() {
 
   // next-themes hydrates the resolved theme client-side. Render a stable
   // placeholder until mount to avoid SSR/CSR icon mismatch.
+  // eslint-disable-next-line react-hooks/set-state-in-effect -- intentional one-shot mount marker
   useEffect(() => setMounted(true), []);
 
   const isDark = mounted && resolvedTheme === "dark";
