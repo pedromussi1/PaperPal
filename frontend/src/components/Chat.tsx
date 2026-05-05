@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Loader2, Send, X } from "lucide-react";
+import { Loader2, Send, Trash2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -22,12 +22,47 @@ type Message =
 
 type Props = { hasDocuments: boolean };
 
+const STORAGE_KEY = "paperpal:chat:v1";
+
 export function Chat({ hasDocuments }: Props) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [streaming, setStreaming] = useState(false);
+  const [hydrated, setHydrated] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
   const bottomRef = useRef<HTMLDivElement | null>(null);
+
+  // Hydrate from localStorage on mount. Any message left in 'streaming'
+  // status from a prior session was interrupted by the page closing —
+  // mark it as an error so the UI doesn't show a forever spinner.
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw) as Message[];
+        const cleaned = parsed.map((m) =>
+          m.role === "assistant" && m.status === "streaming"
+            ? { ...m, status: "error" as const, error: "Interrupted by page reload." }
+            : m,
+        );
+        setMessages(cleaned);
+      }
+    } catch {
+      // Corrupted storage — start fresh; not worth surfacing.
+    }
+    setHydrated(true);
+  }, []);
+
+  // Persist on every change, but only after hydration so we don't clobber
+  // saved state with the empty initial render on mount.
+  useEffect(() => {
+    if (!hydrated) return;
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(messages));
+    } catch {
+      // Quota exceeded or storage disabled — silently drop.
+    }
+  }, [messages, hydrated]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
@@ -94,8 +129,28 @@ export function Chat({ hasDocuments }: Props) {
     abortRef.current?.abort();
   }
 
+  function handleClear() {
+    if (streaming) abortRef.current?.abort();
+    setMessages([]);
+  }
+
   return (
     <div className="flex h-full flex-col">
+      {messages.length > 0 && (
+        <div className="mb-1 flex justify-end">
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="h-7 gap-1 text-xs text-muted-foreground"
+            onClick={handleClear}
+            aria-label="Clear chat history"
+          >
+            <Trash2 className="h-3.5 w-3.5" />
+            Clear chat
+          </Button>
+        </div>
+      )}
       <ScrollArea className="flex-1 px-1">
         {messages.length === 0 ? (
           <EmptyState hasDocuments={hasDocuments} />
