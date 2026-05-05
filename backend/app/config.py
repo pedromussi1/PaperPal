@@ -12,9 +12,17 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
+    # LLM provider: "ollama" (local, free, default) or "groq" (cloud, free tier)
+    llm_provider: str = "ollama"
+
+    # Ollama-specific (used when llm_provider == "ollama")
     ollama_base_url: str = "http://localhost:11434"
     ollama_model: str = "llama3.1:8b"
     ollama_request_timeout: float = 120.0
+
+    # Groq-specific (used when llm_provider == "groq")
+    groq_api_key: str | None = None
+    groq_model: str = "llama-3.1-8b-instant"
 
     embedding_model: str = "sentence-transformers/all-MiniLM-L6-v2"
 

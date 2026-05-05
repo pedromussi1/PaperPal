@@ -1,18 +1,16 @@
-"""Retrieval-augmented generation: retrieve → assemble prompt → stream Ollama.
+"""Retrieval-augmented generation: retrieve → assemble prompt → stream LLM.
 
-Uses a local Ollama server (default http://localhost:11434) so the project
-stays free and offline. Ollama's KV cache automatically reuses the system-
-prompt prefix across requests with the same model.
+Provider-agnostic: takes any `LLMProvider` (Ollama, Groq, etc.). The
+RAG logic — chunk formatting, prompt assembly, citation rules — is the
+same regardless of which model is generating tokens.
 """
 
 from __future__ import annotations
 
-import json
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 
-import httpx
-
+from .llm import LLMProvider
 from .store import Retrieval, VectorStore
 
 _SYSTEM_PROMPT = """You are PaperPal, a research assistant that answers questions about uploaded research papers.
@@ -62,23 +60,23 @@ class RagEngine:
     def __init__(
         self,
         store: VectorStore,
+        provider: LLMProvider,
         *,
-        ollama_base_url: str,
-        model: str,
         top_k: int,
-        request_timeout: float = 120.0,
     ) -> None:
         self._store = store
-        self._base_url = ollama_base_url.rstrip("/")
-        self._model = model
+        self._provider = provider
         self._top_k = top_k
-        self._client = httpx.AsyncClient(timeout=request_timeout)
 
     async def aclose(self) -> None:
-        await self._client.aclose()
+        await self._provider.aclose()
 
     def retrieve(
-        self, question: str, *, paper_ids: list[str] | None = None, top_k: int | None = None
+        self,
+        question: str,
+        *,
+        paper_ids: list[str] | None = None,
+        top_k: int | None = None,
     ) -> list[Retrieval]:
         return self._store.query(
             question,
@@ -91,30 +89,8 @@ class RagEngine:
         question: str,
         retrievals: list[Retrieval],
     ) -> AsyncIterator[str]:
-        payload = {
-            "model": self._model,
-            "stream": True,
-            "messages": [
-                {"role": "system", "content": _SYSTEM_PROMPT},
-                {"role": "user", "content": _build_user_message(question, retrievals)},
-            ],
-            "options": {
-                "temperature": 0.2,
-                "num_ctx": 8192,
-            },
-        }
-
-        async with self._client.stream(
-            "POST", f"{self._base_url}/api/chat", json=payload
-        ) as response:
-            response.raise_for_status()
-            async for line in response.aiter_lines():
-                if not line.strip():
-                    continue
-                event = json.loads(line)
-                if event.get("done"):
-                    break
-                msg = event.get("message") or {}
-                content = msg.get("content")
-                if content:
-                    yield content
+        async for token in self._provider.stream(
+            _SYSTEM_PROMPT,
+            _build_user_message(question, retrievals),
+        ):
+            yield token

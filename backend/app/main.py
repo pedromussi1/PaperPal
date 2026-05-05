@@ -21,6 +21,7 @@ from loguru import logger
 from .config import get_settings
 from .embeddings import get_embedder
 from .ingest import ingest_pdf
+from .llm import GroqProvider, LLMProvider, OllamaProvider
 from .models import (
     DocumentList,
     DocumentSummary,
@@ -37,8 +38,33 @@ if TYPE_CHECKING:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     settings = get_settings()
+
+    provider: LLMProvider
+    name = settings.llm_provider.lower()
+    if name == "ollama":
+        provider = OllamaProvider(
+            base_url=settings.ollama_base_url,
+            model=settings.ollama_model,
+            request_timeout=settings.ollama_request_timeout,
+        )
+        model_label = settings.ollama_model
+    elif name == "groq":
+        if not settings.groq_api_key:
+            raise RuntimeError(
+                "LLM_PROVIDER=groq but GROQ_API_KEY is empty. "
+                "Get a key at https://console.groq.com (free, no credit card)."
+            )
+        provider = GroqProvider(
+            api_key=settings.groq_api_key,
+            model=settings.groq_model,
+        )
+        model_label = settings.groq_model
+    else:
+        raise RuntimeError(
+            f"Unknown LLM_PROVIDER={settings.llm_provider!r}. Must be 'ollama' or 'groq'."
+        )
     logger.info(
-        f"Starting PaperPal backend (ollama={settings.ollama_base_url}, model={settings.ollama_model})"
+        f"Starting PaperPal backend (provider={name}, model={model_label})"
     )
 
     embedder = get_embedder(settings.embedding_model)
@@ -47,13 +73,7 @@ async def lifespan(app: FastAPI):
         embedder=embedder,
     )
 
-    rag = RagEngine(
-        store=store,
-        ollama_base_url=settings.ollama_base_url,
-        model=settings.ollama_model,
-        top_k=settings.top_k,
-        request_timeout=settings.ollama_request_timeout,
-    )
+    rag = RagEngine(store=store, provider=provider, top_k=settings.top_k)
 
     app.state.store = store
     app.state.rag = rag
