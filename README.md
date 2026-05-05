@@ -2,6 +2,8 @@
 
 > Chat over your research papers — fully local. Upload a PDF, ask grounded questions, get answers with inline page-anchored citations. Runs on a local Llama 3.1 model with **no API keys, no cloud LLM dependency, and zero ongoing cost**.
 
+**Live demo:** [paperpal-bay.vercel.app](https://paperpal-bay.vercel.app/) (frontend on Vercel, backend on [HuggingFace Spaces](https://huggingface.co/spaces/Zao0531/paperpal-backend), LLM via Groq's free tier — see [Deployment](#deployment) below for the architecture)
+
 ![PaperPal screenshot](docs/screenshot.png)
 
 ## Why
@@ -47,7 +49,8 @@ The frontend's Next.js Route Handlers proxy every backend call so the browser ne
 
 | Layer            | Tool                                                      | Why                                                              |
 | ---------------- | --------------------------------------------------------- | ---------------------------------------------------------------- |
-| LLM              | **Ollama** + Llama 3.1 8B                                 | Local, free, no API key                                          |
+| LLM (local)      | **Ollama** + Llama 3.1 8B                                 | Default. Free, offline, no API key. Privacy-preserving.          |
+| LLM (cloud)      | **Groq** + `llama-3.1-8b-instant`                         | Optional fallback for hosted deployments. ~10× faster than CPU Ollama. Free tier requires no credit card. Selected via `LLM_PROVIDER=groq`. |
 | Embeddings       | **sentence-transformers** `all-MiniLM-L6-v2`              | Fast, runs on CPU, swappable for ablations                       |
 | Vector store     | **ChromaDB** (persistent client)                          | Zero-config local store; easy migration path to Pinecone/Weaviate |
 | PDF parsing      | **pymupdf**                                               | Fast, page-aware, handles ligatures and multi-column layouts     |
@@ -151,12 +154,42 @@ PaperPal/
     └── package.json
 ```
 
+## Deployment
+
+PaperPal ships in two modes from the same codebase:
+
+```
+        Local mode (default)                      Cloud mode (deployed demo)
+    ┌────────────────────────┐                ┌────────────────────────────┐
+    │ Browser → localhost    │                │ Browser → Vercel (Next.js) │
+    │   ↓                    │                │   ↓ /api/* proxy           │
+    │ Next.js dev server     │                │ FastAPI on HF Spaces       │
+    │   ↓ /api/* proxy       │                │   ↓                        │
+    │ FastAPI on localhost   │                │ Groq cloud LLM             │
+    │   ↓                    │                │ + ChromaDB (ephemeral)     │
+    │ Ollama on localhost    │                │ + sentence-transformers    │
+    │ + ChromaDB persisted   │                │                            │
+    └────────────────────────┘                └────────────────────────────┘
+```
+
+The backend abstracts the LLM behind a `LLMProvider` Protocol with two drivers (`OllamaProvider`, `GroqProvider`). One env var (`LLM_PROVIDER=ollama|groq`) flips the whole pipeline. The retrieval logic, citation rules, and SSE streaming are identical across modes.
+
+Free-tier deployment stack:
+
+| Component | Host | Why |
+|---|---|---|
+| Frontend | Vercel (Hobby plan) | Built by the Next.js team; auto-deploys from `main` |
+| Backend | HuggingFace Spaces (free CPU Docker) | 16 GB RAM, no credit card; `backend/` is pushed via `git subtree push` |
+| LLM | Groq free tier | 30 req/min, 14400 req/day; `llama-3.1-8b-instant` |
+
+Caveats of the free Space tier: cold-start ~30 sec after ~48 h of inactivity; ephemeral filesystem (uploaded PDFs and the ChromaDB index reset on Space restart). Good enough for a portfolio demo; for real use, run locally with Ollama or upgrade the Space to a persistent tier.
+
 ## Roadmap
 
 - ✅ **Backend core** — page-aware ingestion, ChromaDB, Ollama streaming
-- ✅ **Frontend** — Next.js 16, streaming chat, citations, retrieved-chunks devtool, dark mode, library CRUD
+- ✅ **Frontend** — Next.js 16, streaming chat, citations, retrieved-chunks devtool, dark mode, library CRUD, persistent chat history
+- ✅ **Public deployment** — swappable `LLMProvider` (Ollama local + Groq cloud), Vercel + HuggingFace Spaces, [live demo](https://paperpal-bay.vercel.app/)
 - ⏳ **Eval harness** — RAGAS metrics + custom citation accuracy + chunk/k/embedding ablations + no-RAG baseline (`backend/eval/`)
-- ⏳ **Public deployment** — swappable LLM provider (add Groq cloud fallback for the live demo while keeping Ollama as the local default), Vercel for frontend, Fly.io / HF Spaces for backend
 - ⏳ **MLOps polish** — `docker-compose` for one-command bring-up, GitHub Actions CI for lint + typecheck + tests, `MODEL_CARD.md`, `WRITEUP.md`
 
 ## License
