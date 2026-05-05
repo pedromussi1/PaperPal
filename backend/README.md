@@ -7,7 +7,7 @@ sdk: docker
 app_port: 8000
 pinned: false
 license: mit
-short_description: RAG over research papers — backend service (FastAPI + ChromaDB)
+short_description: RAG over research papers — backend service
 ---
 
 # PaperPal Backend
