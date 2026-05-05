@@ -60,5 +60,11 @@ jobs:
       - name: Lint (eslint)
         run: npx eslint .
 
+      # `RouteContext` is a globally-injected Next.js 16 type generated
+      # at `next dev` / `next build` / `next typegen` time. tsc on a fresh
+      # checkout doesn't see it without this step.
+      - name: Generate Next.js types
+        run: npx next typegen
+
       - name: Typecheck (tsc)
         run: npx tsc --noEmit
