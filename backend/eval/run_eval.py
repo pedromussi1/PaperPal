@@ -30,7 +30,7 @@ import httpx
 
 EVAL_DIR = Path(__file__).parent
 DATASET = EVAL_DIR / "dataset.jsonl"
-FIXTURE = EVAL_DIR / "fixtures" / "attention.pdf"
+FIXTURES_DIR = EVAL_DIR / "fixtures"
 RUNS_DIR = EVAL_DIR / "runs"
 
 CITATION_RE = re.compile(r"\[([0-9a-f]{6,32}):(\d+)\]")
@@ -70,20 +70,25 @@ async def _parse_sse(stream: AsyncIterator[str]) -> AsyncIterator[tuple[str, Any
             yield event_type, json.loads("\n".join(data_lines))
 
 
-async def ensure_paper_uploaded(client: httpx.AsyncClient, base_url: str) -> str:
-    """Ensure the eval fixture is in the index. Returns its paper_id."""
-    pdf_bytes = FIXTURE.read_bytes()
-    target_pid = hashlib.sha256(pdf_bytes).hexdigest()[:16]
+async def ensure_fixtures_uploaded(client: httpx.AsyncClient, base_url: str) -> dict[str, str]:
+    """Upload every PDF in fixtures/ that isn't already in the index.
+    Returns a mapping ``filename -> paper_id`` for all fixture PDFs."""
     r = await client.get(f"{base_url}/docs/list")
     r.raise_for_status()
-    docs = r.json().get("documents", [])
-    if any(d["paper_id"] == target_pid for d in docs):
-        return target_pid
-    print(f"Fixture not in index, uploading {FIXTURE.name}...")
-    files = {"file": (FIXTURE.name, pdf_bytes, "application/pdf")}
-    r = await client.post(f"{base_url}/upload", files=files)
-    r.raise_for_status()
-    return str(r.json()["paper_id"])
+    existing_ids = {d["paper_id"] for d in r.json().get("documents", [])}
+
+    mapping: dict[str, str] = {}
+    for pdf in sorted(FIXTURES_DIR.glob("*.pdf")):
+        pdf_bytes = pdf.read_bytes()
+        target_pid = hashlib.sha256(pdf_bytes).hexdigest()[:16]
+        mapping[pdf.name] = target_pid
+        if target_pid in existing_ids:
+            continue
+        print(f"Uploading {pdf.name} (paper_id={target_pid})...")
+        files = {"file": (pdf.name, pdf_bytes, "application/pdf")}
+        resp = await client.post(f"{base_url}/upload", files=files)
+        resp.raise_for_status()
+    return mapping
 
 
 async def run_one_query(
@@ -136,14 +141,20 @@ async def main(base_url: str, run_name: str, paper_ids: list[str] | None) -> int
     results_path = out_dir / "results.jsonl"
 
     async with httpx.AsyncClient(timeout=180.0) as client:
-        target_pid = await ensure_paper_uploaded(client, base_url)
-        scope = paper_ids if paper_ids is not None else [target_pid]
-        print(f"Scoping retrieval to paper_id={target_pid}")
+        fixtures = await ensure_fixtures_uploaded(client, base_url)
+        print(f"Fixtures in index: {list(fixtures.keys())}")
 
         results: list[dict[str, Any]] = []
         with results_path.open("w", encoding="utf-8") as out:
             for i, q in enumerate(questions, 1):
                 short = q["question"][:60]
+                # Per-question paper_id; CLI override wins when given.
+                if paper_ids is not None:
+                    scope: list[str] | None = paper_ids
+                elif q.get("paper_id"):
+                    scope = [q["paper_id"]]
+                else:
+                    scope = None
                 print(f"[{i:>2}/{len(questions)}] {q['id']}: {short}...", flush=True)
                 try:
                     out_data = await run_one_query(client, base_url, q["question"], scope)
