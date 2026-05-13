@@ -1,8 +1,18 @@
-"""PDF → page-aware text chunks.
+"""PDF → page-aware text chunks (parent-child).
 
 Page-aware chunking is mandatory: every chunk must carry the page it came
 from so citations can be rendered. We extract text per page with PyMuPDF,
-then split each page into chunks with a recursive character splitter.
+then split each page into narrow chunks with a recursive character splitter.
+
+Parent-child / "small-to-big" retrieval: each chunk stores two pieces of
+text. ``text`` is the narrow form used for embedding (precise retrieval
+matching). ``context`` is the wider neighborhood — this chunk plus the
+chunks immediately before and after on the same page — and is what's sent
+to the LLM. Narrow-match-with-wide-context is a well-established
+retrieval pattern: it preserves precision in the index while giving the
+generator enough surrounding text to actually answer the question.
+
+Context never crosses page boundaries, since citations are page-anchored.
 """
 
 from __future__ import annotations
@@ -21,7 +31,8 @@ class Chunk:
     paper_id: str
     page: int
     chunk_idx: int
-    text: str
+    text: str          # narrow form — what gets embedded for retrieval
+    context: str       # wide form — what gets passed to the LLM
 
     @property
     def chunk_id(self) -> str:
@@ -61,13 +72,21 @@ def _paper_id_from_bytes(data: bytes) -> str:
 def ingest_pdf(
     pdf_bytes: bytes,
     *,
-    chunk_size: int = 800,
-    chunk_overlap: int = 100,
+    chunk_size: int = 400,
+    chunk_overlap: int = 80,
+    parent_window: int = 1,
     paper_id: str | None = None,
 ) -> IngestResult:
-    """Parse a PDF and return page-aware chunks.
+    """Parse a PDF and return page-aware parent-child chunks.
 
-    Page numbers are 1-indexed (matching what users see in PDF viewers).
+    ``chunk_size`` controls the narrow ``text`` used for retrieval embedding;
+    ``parent_window`` controls how many chunks before and after are joined
+    into ``context`` for the LLM. With ``chunk_size=400`` and
+    ``parent_window=1``, each chunk's context spans roughly three chunks of
+    text on its page (about 1.2 KB).
+
+    Page numbers are 1-indexed (matching what users see in PDF viewers);
+    ``context`` never crosses page boundaries since citations are page-anchored.
     """
     paper_id = paper_id or _paper_id_from_bytes(pdf_bytes)
 
@@ -92,16 +111,20 @@ def ingest_pdf(
             normalized = _normalize(raw)
             if not normalized:
                 continue
-            for i, piece in enumerate(splitter.split_text(normalized)):
-                if piece.strip():
-                    chunks.append(
-                        Chunk(
-                            paper_id=paper_id,
-                            page=page_index,
-                            chunk_idx=i,
-                            text=piece,
-                        )
+            pieces = [p for p in splitter.split_text(normalized) if p.strip()]
+            for i, piece in enumerate(pieces):
+                lo = max(0, i - parent_window)
+                hi = min(len(pieces), i + parent_window + 1)
+                context = "\n".join(pieces[lo:hi])
+                chunks.append(
+                    Chunk(
+                        paper_id=paper_id,
+                        page=page_index,
+                        chunk_idx=i,
+                        text=piece,
+                        context=context,
                     )
+                )
 
     return IngestResult(
         paper_id=paper_id,
@@ -114,8 +137,14 @@ def ingest_pdf(
 def ingest_pdf_path(
     path: str | Path,
     *,
-    chunk_size: int = 800,
-    chunk_overlap: int = 100,
+    chunk_size: int = 400,
+    chunk_overlap: int = 80,
+    parent_window: int = 1,
 ) -> IngestResult:
     data = Path(path).read_bytes()
-    return ingest_pdf(data, chunk_size=chunk_size, chunk_overlap=chunk_overlap)
+    return ingest_pdf(
+        data,
+        chunk_size=chunk_size,
+        chunk_overlap=chunk_overlap,
+        parent_window=parent_window,
+    )

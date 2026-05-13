@@ -152,6 +152,7 @@ async def upload(file: UploadFile = File(...)) -> IngestResponse:
         pdf_bytes,
         chunk_size=settings.chunk_size,
         chunk_overlap=settings.chunk_overlap,
+        parent_window=settings.parent_window,
     )
 
     if not result.chunks:

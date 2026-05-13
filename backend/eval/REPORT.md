@@ -1,5 +1,26 @@
 # PaperPal eval report
 
+_Last updated 2026-05-13 — v0.10.0 parent-child chunking change layered on top of the v0.9.0 ablation_
+
+## v0.10.0 update (parent-child chunking)
+
+The narrow-chunk-for-retrieval, wider-window-for-LLM pattern (see `app/ingest.py`'s `Chunk.text` vs `Chunk.context`) is now the canonical chunking path. The LLM sees ~3× more context per retrieved chunk than in v0.9.0, but the embedding still matches on the narrow span.
+
+**Honest result on the eval we have:** the dense baseline F1 moved from `0.359` (v0.9.0) to `0.397` (v0.10.0) — a +11% relative gain — but the other three configs (`+ rerank`, `+ hybrid`, `+ both`) couldn't be cleanly re-measured in this release: the `run_ablation.ps1` script had Windows-specific subprocess / port-handoff races when restarting uvicorn between configs, so the 4-config table from v0.9.0 below is the most recent trustworthy ablation.
+
+| Method | v0.9.0 F1 | v0.10.0 F1 |
+|---|---:|---:|
+| Dense | 0.359 | **0.397** |
+| + Reranker | 0.410 | not re-measured |
+| + Hybrid | 0.340 | not re-measured |
+| + Hybrid + Reranker | 0.404 | not re-measured |
+
+There's also a structural caveat about what citation accuracy measures: parent-child chunking widens the LLM's *grounding context*, not the *page metadata*, so we'd expect it to improve answer quality more than the citation metric. A scaled human-Likert eval (planned) is the right tool for that gain.
+
+The rest of this report — full v0.9.0 ablation table, per-paper breakdown, methodology — is preserved below for context.
+
+---
+
 _Generated 2026-05-13 — v0.9.0 retrieval ablation_
 
 ## Dataset

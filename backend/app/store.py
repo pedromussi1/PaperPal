@@ -55,8 +55,16 @@ class VectorStore:
         base_meta: dict[str, str | int] = {}
         if title:
             base_meta["title"] = title
+        # `context` holds the wider parent-window text — what the LLM sees at
+        # retrieval time. `text` (the narrow chunk) is still what gets embedded.
         metadatas = [
-            {**base_meta, "paper_id": c.paper_id, "page": c.page, "chunk_idx": c.chunk_idx}
+            {
+                **base_meta,
+                "paper_id": c.paper_id,
+                "page": c.page,
+                "chunk_idx": c.chunk_idx,
+                "context": c.context,
+            }
             for c in chunks
         ]
         embeddings = self._embedder.embed(texts).tolist()
@@ -95,22 +103,34 @@ class VectorStore:
 
         retrievals: list[Retrieval] = []
         for doc, meta, dist in zip(docs, metas, dists, strict=False):
+            # Parent-child: prefer the wider `context` for the LLM payload,
+            # fall back to the narrow chunk for pre-v0.10.0 indexes that
+            # don't have context stored in their metadata.
+            payload = str(meta.get("context", doc))
             retrievals.append(
                 Retrieval(
                     paper_id=str(meta["paper_id"]),
                     page=int(meta["page"]),
                     chunk_idx=int(meta["chunk_idx"]),
-                    text=doc,
+                    text=payload,
                     score=1.0 - float(dist),  # cosine similarity from cosine distance
                 )
             )
         return retrievals
 
     def all_chunks(self) -> tuple[list[str], list[dict]]:
-        """Return every chunk's text and metadata. Used by callers that
-        maintain a parallel index (e.g. BM25) over the same corpus."""
+        """Return every chunk's LLM-facing text and metadata. Used by callers
+        that maintain a parallel index (e.g. BM25) over the same corpus.
+
+        Returns the wider ``context`` form when available so BM25 sees the
+        same vocabulary the LLM does, falls back to the narrow embedding
+        text for legacy data without ``context`` metadata.
+        """
         result = self._collection.get(include=["documents", "metadatas"])
-        return (result.get("documents") or [], result.get("metadatas") or [])
+        docs = result.get("documents") or []
+        metas = result.get("metadatas") or []
+        payloads = [str(m.get("context", d)) for d, m in zip(docs, metas, strict=False)]
+        return (payloads, metas)
 
     def list_papers(self) -> list[dict[str, int | str | None]]:
         result = self._collection.get(include=["metadatas"])

@@ -47,8 +47,13 @@ class Settings(BaseSettings):
     hybrid_retrieval: bool = False
     rrf_k: int = Field(60, gt=0)
 
-    chunk_size: int = Field(800, gt=0)
-    chunk_overlap: int = Field(100, ge=0)
+    # Parent-child chunking: narrow `chunk_size` chunks get embedded for
+    # precise retrieval matching; the LLM sees a wider window of the
+    # surrounding text (`parent_window` chunks on each side) for grounding.
+    # See app/ingest.py.
+    chunk_size: int = Field(400, gt=0)
+    chunk_overlap: int = Field(80, ge=0)
+    parent_window: int = Field(1, ge=0)
 
     top_k: int = Field(8, gt=0)
 
