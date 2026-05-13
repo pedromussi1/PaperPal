@@ -44,6 +44,7 @@ from loguru import logger
 
 from .config import get_settings
 from .embeddings import get_embedder
+from .hybrid import BM25Index
 from .ingest import ingest_pdf
 from .llm import GroqProvider, LLMProvider, OllamaProvider
 from .models import (
@@ -98,15 +99,20 @@ async def lifespan(app: FastAPI):
         embedder=embedder,
     )
 
+    bm25 = BM25Index(store) if settings.hybrid_retrieval else None
+
     rag = RagEngine(
         store=store,
         provider=provider,
         top_k=settings.top_k,
         retrieve_top_k=settings.retrieve_top_k,
         reranker_model=settings.reranker_model,
+        bm25=bm25,
+        rrf_k=settings.rrf_k,
     )
 
     app.state.store = store
+    app.state.bm25 = bm25
     app.state.rag = rag
     app.state.settings = settings
 
@@ -156,6 +162,8 @@ async def upload(file: UploadFile = File(...)) -> IngestResponse:
 
     title = result.title or file.filename
     app.state.store.add_chunks(result.chunks, title=title)
+    if app.state.bm25 is not None:
+        app.state.bm25.invalidate()
     logger.info(
         f"Ingested {file.filename}: paper_id={result.paper_id} "
         f"pages={result.page_count} chunks={len(result.chunks)}"
@@ -191,6 +199,8 @@ def delete_doc(
     deleted = app.state.store.delete_paper(paper_id)
     if deleted == 0:
         raise HTTPException(status_code=404, detail="paper_id not found")
+    if app.state.bm25 is not None:
+        app.state.bm25.invalidate()
     logger.info(f"Deleted paper_id={paper_id} ({deleted} chunks)")
 
 

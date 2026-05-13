@@ -38,6 +38,15 @@ class Settings(BaseSettings):
     reranker_model: str = "cross-encoder/ms-marco-MiniLM-L-12-v2"
     retrieve_top_k: int = Field(24, gt=0)
 
+    # Hybrid retrieval: run dense (bi-encoder) and BM25 in parallel and fuse
+    # the two ranked lists with Reciprocal Rank Fusion before the cross-encoder
+    # rerank step. Helps on queries that hinge on rare/exact terms (named
+    # entities, formulas, numeric IDs) where pure dense often misses — but
+    # only on multi-document corpora. Off by default until the scaled eval
+    # (v0.9.0) characterizes the gain on a realistic dataset.
+    hybrid_retrieval: bool = False
+    rrf_k: int = Field(60, gt=0)
+
     chunk_size: int = Field(800, gt=0)
     chunk_overlap: int = Field(100, ge=0)
 

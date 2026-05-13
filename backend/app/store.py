@@ -106,6 +106,12 @@ class VectorStore:
             )
         return retrievals
 
+    def all_chunks(self) -> tuple[list[str], list[dict]]:
+        """Return every chunk's text and metadata. Used by callers that
+        maintain a parallel index (e.g. BM25) over the same corpus."""
+        result = self._collection.get(include=["documents", "metadatas"])
+        return (result.get("documents") or [], result.get("metadatas") or [])
+
     def list_papers(self) -> list[dict[str, int | str | None]]:
         result = self._collection.get(include=["metadatas"])
         metas = result.get("metadatas") or []

@@ -18,6 +18,8 @@ dependencies = [
     # Use OS certificate store for SSL — required on Windows to avoid
     # CERTIFICATE_VERIFY_FAILED on first model download / HF Hub HEAD checks.
     "truststore>=0.10.0",
+    # Hybrid retrieval: BM25 alongside the dense vector store, fused via RRF.
+    "rank-bm25>=0.2.2",
 ]
 
 [project.optional-dependencies]

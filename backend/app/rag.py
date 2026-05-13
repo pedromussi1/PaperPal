@@ -10,6 +10,7 @@ from __future__ import annotations
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 
+from .hybrid import BM25Index, rrf_fuse
 from .llm import LLMProvider
 from .rerank import rerank
 from .store import Retrieval, VectorStore
@@ -66,12 +67,16 @@ class RagEngine:
         top_k: int,
         retrieve_top_k: int = 24,
         reranker_model: str = "",
+        bm25: BM25Index | None = None,
+        rrf_k: int = 60,
     ) -> None:
         self._store = store
         self._provider = provider
         self._top_k = top_k
         self._retrieve_top_k = retrieve_top_k
         self._reranker_model = reranker_model
+        self._bm25 = bm25
+        self._rrf_k = rrf_k
 
     async def aclose(self) -> None:
         await self._provider.aclose()
@@ -83,29 +88,44 @@ class RagEngine:
         paper_ids: list[str] | None = None,
         top_k: int | None = None,
     ) -> list[Retrieval]:
-        """Two-stage retrieval when a reranker is configured.
+        """Retrieval pipeline (any subset can be turned off for A/B):
 
-        Stage 1: cosine-similarity search in the bi-encoder index (cheap,
-        good for coarse recall).
-        Stage 2: cross-encoder reranking on the top ``retrieve_top_k``
-        candidates (more accurate, scales with N rather than corpus size).
+            1. Dense bi-encoder candidates (always).
+            2. BM25 candidates run in parallel (if `bm25` provided).
+            3. Reciprocal Rank Fusion over (1) and (2) into a single
+               candidate list (if hybrid is on).
+            4. Cross-encoder rerank of the fused list down to top_k
+               (if `reranker_model` set).
 
-        When ``reranker_model`` is empty, falls back to single-stage retrieval
-        — useful for A/B comparison against the v0.4.0 eval baseline.
+        When *only* dense + nothing else is enabled, retrieve() collapses
+        to a single bi-encoder call returning ``final_k`` results — the
+        canonical v0.4.0 baseline preserved for A/B.
         """
         final_k = top_k or self._top_k
-        if not self._reranker_model:
-            return self._store.query(question, top_k=final_k, paper_ids=paper_ids)
+        using_rerank = bool(self._reranker_model)
+        using_bm25 = self._bm25 is not None
 
-        # Pull a wider candidate pool so the reranker has something to reorder.
-        candidate_k = max(self._retrieve_top_k, final_k)
-        candidates = self._store.query(question, top_k=candidate_k, paper_ids=paper_ids)
-        return rerank(
-            question,
-            candidates,
-            model_name=self._reranker_model,
-            top_k=final_k,
-        )
+        # If we're going to rerank/fuse, pull a wider candidate pool so the
+        # later stages have something to reorder.
+        candidate_k = max(self._retrieve_top_k, final_k) if (using_rerank or using_bm25) else final_k
+
+        dense = self._store.query(question, top_k=candidate_k, paper_ids=paper_ids)
+
+        if using_bm25:
+            assert self._bm25 is not None
+            bm25_results = self._bm25.query(question, top_k=candidate_k, paper_ids=paper_ids)
+            candidates = rrf_fuse([dense, bm25_results], top_k=candidate_k, k=self._rrf_k)
+        else:
+            candidates = dense
+
+        if using_rerank:
+            return rerank(
+                question,
+                candidates,
+                model_name=self._reranker_model,
+                top_k=final_k,
+            )
+        return candidates[:final_k]
 
     async def stream_answer(
         self,
