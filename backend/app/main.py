@@ -10,10 +10,23 @@ Endpoints:
 
 from __future__ import annotations
 
-# Populate os.environ from backend/.env BEFORE any import that touches
-# huggingface_hub or transformers — those libraries read HF_HUB_OFFLINE /
-# TRANSFORMERS_OFFLINE directly from os.environ at import time, and
-# pydantic-settings (used elsewhere) does not push values back into the env.
+# IMPORTANT: SSL setup BEFORE anything else that might touch the network.
+# httpx (used by huggingface_hub) uses its own SSL context and does not read
+# SSL_CERT_FILE / REQUESTS_CA_BUNDLE. On Windows the bundled OpenSSL often
+# can't find a valid CA path, which crashes the sentence-transformers /
+# huggingface_hub startup with `CERTIFICATE_VERIFY_FAILED`. `truststore`
+# patches Python's `ssl` module to use the OS certificate store — which is
+# always valid on Windows/macOS/Linux. After this call, every later SSL
+# request (httpx, requests, urllib) just works.
+import truststore as _truststore
+
+_truststore.inject_into_ssl()
+
+# Populate os.environ from backend/.env so settings like VISION_MODEL are
+# available to all modules. pydantic-settings will also load .env when
+# Settings() is constructed, but it reads into the Settings object only —
+# never back into os.environ. Anything that consults os.environ directly
+# (HF env flags, third-party libs) needs this to run first.
 from pathlib import Path as _Path
 
 from dotenv import load_dotenv as _load_dotenv
@@ -85,7 +98,13 @@ async def lifespan(app: FastAPI):
         embedder=embedder,
     )
 
-    rag = RagEngine(store=store, provider=provider, top_k=settings.top_k)
+    rag = RagEngine(
+        store=store,
+        provider=provider,
+        top_k=settings.top_k,
+        retrieve_top_k=settings.retrieve_top_k,
+        reranker_model=settings.reranker_model,
+    )
 
     app.state.store = store
     app.state.rag = rag

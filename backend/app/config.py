@@ -31,6 +31,13 @@ class Settings(BaseSettings):
 
     embedding_model: str = "sentence-transformers/all-MiniLM-L6-v2"
 
+    # Two-stage retrieval: pull `retrieve_top_k` candidates from the bi-encoder
+    # store, then rerank with a cross-encoder down to the final `top_k` the LLM
+    # sees. Setting `reranker_model=""` disables reranking (single-stage),
+    # which is the canonical A/B baseline.
+    reranker_model: str = "cross-encoder/ms-marco-MiniLM-L-12-v2"
+    retrieve_top_k: int = Field(24, gt=0)
+
     chunk_size: int = Field(800, gt=0)
     chunk_overlap: int = Field(100, ge=0)
 

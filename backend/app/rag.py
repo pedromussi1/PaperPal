@@ -11,6 +11,7 @@ from collections.abc import AsyncIterator
 from dataclasses import dataclass
 
 from .llm import LLMProvider
+from .rerank import rerank
 from .store import Retrieval, VectorStore
 
 _SYSTEM_PROMPT = """You are PaperPal, a research assistant that answers questions about uploaded research papers.
@@ -63,10 +64,14 @@ class RagEngine:
         provider: LLMProvider,
         *,
         top_k: int,
+        retrieve_top_k: int = 24,
+        reranker_model: str = "",
     ) -> None:
         self._store = store
         self._provider = provider
         self._top_k = top_k
+        self._retrieve_top_k = retrieve_top_k
+        self._reranker_model = reranker_model
 
     async def aclose(self) -> None:
         await self._provider.aclose()
@@ -78,10 +83,28 @@ class RagEngine:
         paper_ids: list[str] | None = None,
         top_k: int | None = None,
     ) -> list[Retrieval]:
-        return self._store.query(
+        """Two-stage retrieval when a reranker is configured.
+
+        Stage 1: cosine-similarity search in the bi-encoder index (cheap,
+        good for coarse recall).
+        Stage 2: cross-encoder reranking on the top ``retrieve_top_k``
+        candidates (more accurate, scales with N rather than corpus size).
+
+        When ``reranker_model`` is empty, falls back to single-stage retrieval
+        — useful for A/B comparison against the v0.4.0 eval baseline.
+        """
+        final_k = top_k or self._top_k
+        if not self._reranker_model:
+            return self._store.query(question, top_k=final_k, paper_ids=paper_ids)
+
+        # Pull a wider candidate pool so the reranker has something to reorder.
+        candidate_k = max(self._retrieve_top_k, final_k)
+        candidates = self._store.query(question, top_k=candidate_k, paper_ids=paper_ids)
+        return rerank(
             question,
-            top_k=top_k or self._top_k,
-            paper_ids=paper_ids,
+            candidates,
+            model_name=self._reranker_model,
+            top_k=final_k,
         )
 
     async def stream_answer(
