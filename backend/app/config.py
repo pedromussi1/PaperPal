@@ -20,6 +20,11 @@ class Settings(BaseSettings):
     ollama_model: str = "llama3.1:8b"
     ollama_request_timeout: float = 120.0
 
+    # Local vision-language model for /query/image. Must be a vision-capable
+    # Ollama model that you've already pulled (e.g. `ollama pull llama3.2-vision:11b`).
+    vision_model: str = "llama3.2-vision:11b"
+    vision_request_timeout: float = 180.0
+
     # Groq-specific (used when llm_provider == "groq")
     groq_api_key: str | None = None
     groq_model: str = "llama-3.1-8b-instant"

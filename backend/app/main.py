@@ -1,19 +1,30 @@
 """FastAPI entrypoint.
 
 Endpoints:
-    POST /upload      multipart PDF → ingest → return paper_id
-    GET  /docs/list   list ingested papers
-    POST /query       question → SSE stream of answer tokens (final event = full payload)
-    GET  /healthz     liveness check
+    POST /upload       multipart PDF → ingest → return paper_id
+    GET  /docs/list    list ingested papers
+    POST /query        question → SSE stream of answer tokens (final event = full payload)
+    POST /query/image  image attachment → OCR → SSE stream (same shape + leading ocr event)
+    GET  /healthz      liveness check
 """
 
 from __future__ import annotations
+
+# Populate os.environ from backend/.env BEFORE any import that touches
+# huggingface_hub or transformers — those libraries read HF_HUB_OFFLINE /
+# TRANSFORMERS_OFFLINE directly from os.environ at import time, and
+# pydantic-settings (used elsewhere) does not push values back into the env.
+from pathlib import Path as _Path
+
+from dotenv import load_dotenv as _load_dotenv
+
+_load_dotenv(_Path(__file__).resolve().parent.parent / ".env")
 
 import json
 from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING
 
-from fastapi import FastAPI, File, HTTPException, Path, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Path, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from loguru import logger
@@ -30,6 +41,7 @@ from .models import (
 )
 from .rag import RagEngine
 from .store import VectorStore
+from .vlm import VlmError, extract_text_from_image
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
@@ -186,6 +198,109 @@ async def query(req: QueryRequest) -> StreamingResponse:
         full_answer: list[str] = []
         try:
             async for token in rag.stream_answer(req.question, retrievals):
+                full_answer.append(token)
+                yield f"event: token\ndata: {json.dumps({'text': token})}\n\n"
+        except Exception as exc:
+            logger.exception("stream_answer failed")
+            yield f"event: error\ndata: {json.dumps({'message': str(exc)})}\n\n"
+            return
+
+        yield f"event: done\ndata: {json.dumps({'answer': ''.join(full_answer)})}\n\n"
+
+    return StreamingResponse(
+        sse(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+@app.post("/query/image")
+async def query_image(
+    image: UploadFile = File(...),
+    text: str = Form(""),
+    top_k: int = Form(0),
+    paper_ids: str = Form(""),
+) -> StreamingResponse:
+    """Ask a question whose content is an image of text.
+
+    A local Ollama vision-language model transcribes the image while
+    preserving its visual structure (boxes, columns, labeled options). The
+    transcribed text becomes the query for the existing RAG pipeline. An
+    optional ``text`` field is prepended so users can attach context.
+
+    Multipart form fields (all but ``image`` optional):
+        image      file (image/*) — required
+        text       string — additional user-typed context, prepended to the transcription
+        paper_ids  comma-separated paper IDs to scope retrieval to
+        top_k      int > 0 — override the default retrieval depth
+
+    Streams the same SSE events as /query, plus a leading ``ocr`` event
+    carrying the transcribed text so the frontend can render the user's
+    transcribed message. (The event name stayed ``ocr`` for client
+    compatibility even though we no longer use Tesseract underneath.)
+    """
+    if not image.content_type or not image.content_type.startswith("image/"):
+        raise HTTPException(status_code=400, detail="Only image/* uploads are accepted.")
+
+    image_bytes = await image.read()
+    settings = get_settings()
+    try:
+        vlm = await extract_text_from_image(
+            image_bytes,
+            base_url=settings.ollama_base_url,
+            model=settings.vision_model,
+            timeout=settings.vision_request_timeout,
+        )
+    except VlmError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if not vlm.text:
+        raise HTTPException(
+            status_code=422,
+            detail="The vision model returned no text. Try a clearer or higher-resolution image.",
+        )
+
+    user_text = (text or "").strip()
+    if user_text:
+        question = f"{user_text}\n\n[Text from attached image]\n{vlm.text}"
+    else:
+        question = vlm.text
+    if len(question) > 5000:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Combined query too long ({len(question)} chars; cap is 5000).",
+        )
+
+    parsed_paper_ids = [p.strip() for p in paper_ids.split(",") if p.strip()] or None
+    effective_top_k = top_k if top_k > 0 else None
+
+    rag: RagEngine = app.state.rag
+    retrievals = rag.retrieve(question, paper_ids=parsed_paper_ids, top_k=effective_top_k)
+    logger.info(
+        f"/query/image: vlm={len(vlm.text)} chars (model={vlm.model}), "
+        f"retrieved={len(retrievals)} chunks, paper_ids={parsed_paper_ids}"
+    )
+
+    async def sse() -> AsyncIterator[str]:
+        yield (
+            "event: ocr\n"
+            f"data: {json.dumps({'text': vlm.text, 'width': 0, 'height': 0})}\n\n"
+        )
+
+        retrieval_payload = [
+            {
+                "paper_id": r.paper_id,
+                "page": r.page,
+                "chunk_idx": r.chunk_idx,
+                "text": r.text,
+                "score": r.score,
+            }
+            for r in retrievals
+        ]
+        yield f"event: retrieved\ndata: {json.dumps(retrieval_payload)}\n\n"
+
+        full_answer: list[str] = []
+        try:
+            async for token in rag.stream_answer(question, retrievals):
                 full_answer.append(token)
                 yield f"event: token\ndata: {json.dumps({'text': token})}\n\n"
         except Exception as exc:

@@ -36,6 +36,7 @@ export type DocumentList = { documents: DocumentSummary[] };
 
 export type StreamEvent =
   | { type: "retrieved"; chunks: RetrievedChunk[] }
+  | { type: "ocr"; text: string; width: number; height: number }
   | { type: "token"; text: string }
   | { type: "done"; answer: string }
   | { type: "error"; message: string };
@@ -97,6 +98,36 @@ export async function* streamQuery(
 }
 
 /**
+ * Stream a query whose content is an image of text. The backend OCRs the
+ * image and feeds the recognized text into the same RAG pipeline as text
+ * queries. Yields the same StreamEvents as streamQuery plus a leading `ocr`
+ * event carrying the transcribed text and image dimensions.
+ */
+export async function* streamImageQuery(
+  image: File,
+  opts: { text?: string; paperIds?: string[]; topK?: number; signal?: AbortSignal } = {},
+): AsyncGenerator<StreamEvent> {
+  const fd = new FormData();
+  fd.append("image", image);
+  if (opts.text) fd.append("text", opts.text);
+  if (opts.paperIds?.length) fd.append("paper_ids", opts.paperIds.join(","));
+  if (opts.topK !== undefined) fd.append("top_k", String(opts.topK));
+
+  const res = await fetch("/api/query/image", {
+    method: "POST",
+    body: fd,
+    signal: opts.signal,
+  });
+
+  if (!res.ok || !res.body) {
+    const detail = await res.text().catch(() => "");
+    throw new Error(`Image query failed (${res.status}): ${detail || res.statusText}`);
+  }
+
+  yield* parseSse(res.body);
+}
+
+/**
  * Minimal SSE parser. SSE frames are separated by a blank line; each frame
  * has `event:` and `data:` fields. We only care about whole frames, so we
  * buffer until we see `\n\n`.
@@ -140,6 +171,10 @@ function parseFrame(frame: string): StreamEvent | null {
     switch (event) {
       case "retrieved":
         return { type: "retrieved", chunks: parsed as RetrievedChunk[] };
+      case "ocr": {
+        const o = parsed as { text: string; width: number; height: number };
+        return { type: "ocr", text: o.text, width: o.width, height: o.height };
+      }
       case "token":
         return { type: "token", text: (parsed as { text: string }).text };
       case "done":
